@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Trip Splitter</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@500;700&family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="page-shell">
+    <header class="hero">
+      <div>
+        <p class="eyebrow">Trip expense tracker</p>
+        <h1>Capture who paid, who owes, and how to settle up cleanly.</h1>
+        <p class="hero-copy">
+          Add your travel group, log each shared expense, split bills equally or with exact amounts,
+          and finish the trip with a minimal set of repayments.
+        </p>
+      </div>
+      <section class="hero-card">
+        <h2>How it works</h2>
+        <ol>
+          <li>Add everyone on the trip.</li>
+          <li>Record each expense and choose the split.</li>
+          <li>Review balances and settle the smallest number of debts.</li>
+        </ol>
+      </section>
+    </header>
+
+    <main class="grid">
+      <section class="panel">
+        <div class="panel-heading">
+          <div>
+            <p class="section-label">People</p>
+            <h2>Trip members</h2>
+          </div>
+        </div>
+        <form id="member-form" class="stack-form">
+          <label>
+            Member name
+            <div class="inline-form">
+              <input id="member-name" name="memberName" type="text" maxlength="40" placeholder="e.g. Alex" required>
+              <button type="submit">Add member</button>
+            </div>
+          </label>
+        </form>
+        <div id="member-empty" class="empty-state">Add at least two members before entering expenses.</div>
+        <div id="member-list" class="chip-list"></div>
+      </section>
+
+      <section class="panel panel-wide">
+        <div class="panel-heading">
+          <div>
+            <p class="section-label">Expenses</p>
+            <h2>Log a shared cost</h2>
+          </div>
+          <div class="header-actions">
+            <span id="sync-status" class="status-pill" data-tone="neutral">Loading shared trip...</span>
+            <button id="sync-button" class="ghost-button" type="button">Sync latest</button>
+          </div>
+        </div>
+        <form id="expense-form" class="expense-form">
+          <label>
+            Title
+            <input id="expense-title" name="title" type="text" placeholder="Dinner in Kyoto" required>
+          </label>
+          <label>
+            Total amount
+            <input id="expense-amount" name="amount" type="number" min="0.01" step="0.01" placeholder="0.00" required>
+          </label>
+          <label>
+            Paid by
+            <select id="expense-paid-by" name="paidBy" required></select>
+          </label>
+          <label>
+            Split mode
+            <select id="expense-split-mode" name="splitMode">
+              <option value="equal">Split equally</option>
+              <option value="custom">Enter exact amounts owed</option>
+            </select>
+          </label>
+
+          <fieldset class="participant-picker">
+            <legend>Split with</legend>
+            <div id="participant-options" class="check-grid"></div>
+          </fieldset>
+
+          <div id="custom-split" class="custom-split hidden">
+            <div class="custom-heading">
+              <span>Custom owed amounts</span>
+              <span id="custom-total-hint">Total assigned: 0.00</span>
+            </div>
+            <div id="custom-split-inputs" class="custom-grid"></div>
+          </div>
+
+          <button type="submit" class="primary-action">Save expense</button>
+        </form>
+      </section>
+
+      <section class="panel">
+        <div class="panel-heading">
+          <div>
+            <p class="section-label">Balances</p>
+            <h2>Net position</h2>
+          </div>
+        </div>
+        <div id="balance-list" class="summary-list"></div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-heading">
+          <div>
+            <p class="section-label">Settlement</p>
+            <h2>Simplified debts</h2>
+          </div>
+        </div>
+        <div id="settlement-list" class="summary-list"></div>
+      </section>
+
+      <section class="panel panel-full">
+        <div class="panel-heading">
+          <div>
+            <p class="section-label">History</p>
+            <h2>Recorded expenses</h2>
+          </div>
+          <button id="reset-button" class="ghost-button" type="button">Reset trip</button>
+        </div>
+        <div id="expense-list" class="expense-list"></div>
+      </section>
+    </main>
+  </div>
+
+  <template id="member-chip-template">
+    <div class="chip">
+      <span></span>
+      <button type="button" aria-label="Remove member">Remove</button>
+    </div>
+  </template>
+
+  <script src="app.js"></script>
+</body>
+</html>
