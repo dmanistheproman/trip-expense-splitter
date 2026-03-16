@@ -373,11 +373,9 @@ async function getCurrencies() {
 
   try {
     if (process.env.XCHANGE_API_KEY) {
-      const response = await fetch("https://api.xchangeapi.com/latest?base=USD", {
-        headers: {
-          "api-key": process.env.XCHANGE_API_KEY,
-        },
-      });
+      const url = new URL("https://xchange-rate-api.com/v1/latest");
+      url.searchParams.set("base", "USD");
+      const response = await fetch(url, buildXchangeRequestOptions());
 
       if (response.ok) {
         const payload = await response.json();
@@ -419,9 +417,10 @@ async function getHistoricalRateToSgd(currencyCode, expenseDate) {
     return cached;
   }
 
+  const useLatest = expenseDate >= todayIsoDate();
   const payload = process.env.XCHANGE_API_KEY
-    ? await fetchHistoricalRateFromXchange(currencyCode, expenseDate)
-    : await fetchHistoricalRateFromFrankfurter(currencyCode, expenseDate);
+    ? await fetchRateFromXchange(currencyCode, expenseDate, useLatest)
+    : await fetchRateFromFrankfurter(currencyCode, expenseDate, useLatest);
 
   const rate = Number(payload?.rates?.[BASE_CURRENCY]);
   if (!Number.isFinite(rate) || rate <= 0) {
@@ -436,26 +435,29 @@ async function getHistoricalRateToSgd(currencyCode, expenseDate) {
   return result;
 }
 
-async function fetchHistoricalRateFromXchange(currencyCode, expenseDate) {
-  const url = new URL(`https://api.xchangeapi.com/historical/${expenseDate}`);
+async function fetchRateFromXchange(currencyCode, expenseDate, useLatest) {
+  const url = new URL(useLatest ? "https://xchange-rate-api.com/v1/latest" : "https://xchange-rate-api.com/v1/historical");
+  if (!useLatest) {
+    url.searchParams.set("date", expenseDate);
+  }
   url.searchParams.set("base", currencyCode);
   url.searchParams.set("symbols", BASE_CURRENCY);
 
-  const response = await fetch(url, {
-    headers: {
-      "api-key": process.env.XCHANGE_API_KEY,
-    },
-  });
+  const response = await fetch(url, buildXchangeRequestOptions());
 
   if (!response.ok) {
-    throw new Error(`Could not load the ${expenseDate} exchange rate for ${currencyCode} from XChange.`);
+    const errorText = await response.text();
+    throw new Error(
+      `Could not load the ${useLatest ? "latest" : expenseDate} exchange rate for ${currencyCode} from XChange. ${errorText}`.trim()
+    );
   }
 
   return response.json();
 }
 
-async function fetchHistoricalRateFromFrankfurter(currencyCode, expenseDate) {
-  const url = new URL(`https://api.frankfurter.app/${expenseDate}`);
+async function fetchRateFromFrankfurter(currencyCode, expenseDate, useLatest) {
+  const endpoint = useLatest ? "latest" : expenseDate;
+  const url = new URL(`https://api.frankfurter.app/${endpoint}`);
   url.searchParams.set("from", currencyCode);
   url.searchParams.set("to", BASE_CURRENCY);
 
@@ -641,6 +643,18 @@ function isIsoDate(value) {
 
 function roundCurrency(value) {
   return Math.round((Number(value) + Number.EPSILON) * 100) / 100;
+}
+
+function todayIsoDate() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function buildXchangeRequestOptions() {
+  return {
+    headers: {
+      Authorization: `Bearer ${process.env.XCHANGE_API_KEY}`,
+    },
+  };
 }
 
 module.exports = {
