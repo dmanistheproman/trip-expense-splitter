@@ -375,6 +375,7 @@ async function getCurrencies() {
     if (process.env.XCHANGE_API_KEY) {
       const url = new URL("https://xchange-rate-api.com/v1/latest");
       url.searchParams.set("base", "USD");
+      url.searchParams.set("api_key", process.env.XCHANGE_API_KEY);
       const response = await fetch(url, buildXchangeRequestOptions());
 
       if (response.ok) {
@@ -442,6 +443,7 @@ async function fetchRateFromXchange(currencyCode, expenseDate, useLatest) {
   }
   url.searchParams.set("base", currencyCode);
   url.searchParams.set("symbols", BASE_CURRENCY);
+  url.searchParams.set("api_key", process.env.XCHANGE_API_KEY);
 
   const response = await fetch(url, buildXchangeRequestOptions());
 
