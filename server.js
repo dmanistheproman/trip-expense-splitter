@@ -252,6 +252,68 @@ async function handleApi(request, response, url) {
     return;
   }
 
+  if (request.method === "PUT" && url.pathname.startsWith("/api/expenses/")) {
+    const expenseId = decodeURIComponent(url.pathname.slice("/api/expenses/".length));
+    const existing = await pool.query("SELECT id, created_at AS \"createdAt\" FROM expenses WHERE id = $1", [expenseId]);
+    if (!existing.rowCount) {
+      respondJson(response, 404, { error: "Expense not found." });
+      return;
+    }
+
+    const body = await readJsonBody(request);
+    const validation = await validateExpensePayload(body);
+    if (validation.error) {
+      respondJson(response, 400, { error: validation.error });
+      return;
+    }
+
+    await runTransaction(async (client) => {
+      await client.query(
+        `
+          UPDATE expenses
+          SET
+            title = $2,
+            amount = $3,
+            currency_code = $4,
+            expense_date = $5,
+            fx_rate_to_sgd = $6,
+            fx_date = $7,
+            amount_sgd = $8,
+            paid_by = $9,
+            split_mode = $10
+          WHERE id = $1
+        `,
+        [
+          expenseId,
+          validation.title,
+          validation.amount,
+          validation.currencyCode,
+          validation.expenseDate,
+          validation.fxRateToSgd,
+          validation.fxDate,
+          validation.amountSgd,
+          validation.paidBy,
+          validation.splitMode,
+        ]
+      );
+
+      await client.query("DELETE FROM expense_shares WHERE expense_id = $1", [expenseId]);
+
+      for (const share of validation.shares) {
+        await client.query(
+          `
+            INSERT INTO expense_shares (expense_id, member_id, amount, amount_sgd)
+            VALUES ($1, $2, $3, $4)
+          `,
+          [expenseId, share.memberId, share.amount, share.amountSgd]
+        );
+      }
+    });
+
+    respondJson(response, 200, await readState());
+    return;
+  }
+
   if (request.method === "POST" && url.pathname === "/api/reset") {
     await runTransaction(async (client) => {
       await client.query("DELETE FROM expense_shares");

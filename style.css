@@ -214,6 +214,11 @@ select:disabled {
   gap: 16px;
 }
 
+.form-actions {
+  display: grid;
+  gap: 10px;
+}
+
 .fx-preview {
   padding: 14px 16px;
   border-radius: 16px;
@@ -296,6 +301,38 @@ select:disabled {
   display: flex;
   gap: 12px;
   flex-direction: column;
+}
+
+.expense-card-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.expense-card-actions button {
+  min-height: 44px;
+  padding: 10px 14px;
+}
+
+.reset-slider {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 16px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.52);
+  border: 1px solid rgba(72, 52, 27, 0.08);
+}
+
+.reset-slider label {
+  font-size: 0.92rem;
+  color: var(--muted);
+}
+
+.reset-slider input[type="range"] {
+  margin-top: 0;
+  padding: 0;
+  min-height: auto;
 }
 
 .summary-item strong {

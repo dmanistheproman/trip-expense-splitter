@@ -104,7 +104,10 @@
 
           <div id="fx-preview" class="fx-preview">Settlement base: SGD. Historical rate will be applied when you save.</div>
 
-          <button type="submit" class="primary-action">Save expense</button>
+          <div class="form-actions">
+            <button type="submit" id="expense-submit-button" class="primary-action">Save expense</button>
+            <button type="button" id="expense-cancel-button" class="ghost-button hidden">Cancel edit</button>
+          </div>
         </form>
       </section>
 
@@ -134,7 +137,10 @@
             <p class="section-label">History</p>
             <h2>Recorded expenses</h2>
           </div>
-          <button id="reset-button" class="ghost-button" type="button">Reset trip</button>
+        </div>
+        <div class="reset-slider">
+          <label for="reset-slider-input">Slide to reset the trip</label>
+          <input id="reset-slider-input" type="range" min="0" max="100" value="0">
         </div>
         <div id="expense-list" class="expense-list"></div>
       </section>

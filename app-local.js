@@ -45,8 +45,11 @@ const fxPreview = document.querySelector("#fx-preview");
 const balanceList = document.querySelector("#balance-list");
 const settlementList = document.querySelector("#settlement-list");
 const expenseList = document.querySelector("#expense-list");
-const resetButton = document.querySelector("#reset-button");
+const expenseSubmitButton = document.querySelector("#expense-submit-button");
+const expenseCancelButton = document.querySelector("#expense-cancel-button");
+const resetSliderInput = document.querySelector("#reset-slider-input");
 const syncStatus = document.querySelector("#sync-status");
+let editingExpenseId = null;
 
 memberForm.addEventListener("submit", handleMemberSubmit);
 expenseForm.addEventListener("submit", handleExpenseSubmit);
@@ -59,7 +62,8 @@ customSplitInputs.addEventListener("input", updateCustomTotalHint);
 expenseCurrencySelect.addEventListener("change", updateExpenseMetaPreview);
 expenseAmountInput.addEventListener("input", updateExpenseMetaPreview);
 expenseDateInput.addEventListener("input", updateExpenseMetaPreview);
-resetButton.addEventListener("click", handleReset);
+expenseCancelButton.addEventListener("click", cancelExpenseEdit);
+resetSliderInput.addEventListener("input", handleResetSlide);
 
 expenseDateInput.value = todayIsoDate();
 render();
@@ -185,8 +189,8 @@ async function handleExpenseSubmit(event) {
     const amountSgd = roundCurrency(amount * fx.rate);
     const sharesWithSgd = buildConvertedShares(shares, fx.rate);
 
-    state.expenses.unshift({
-      id: crypto.randomUUID(),
+    const nextExpense = {
+      id: editingExpenseId || crypto.randomUUID(),
       title,
       amount: roundCurrency(amount),
       amountSgd,
@@ -198,13 +202,18 @@ async function handleExpenseSubmit(event) {
       splitMode,
       shares: sharesWithSgd,
       participants: sharesWithSgd.map((share) => share.memberId),
-      createdAt: new Date().toISOString(),
-    });
+      createdAt: editingExpenseId
+        ? (state.expenses.find((expense) => expense.id === editingExpenseId)?.createdAt || new Date().toISOString())
+        : new Date().toISOString(),
+    };
 
-    expenseForm.reset();
-    splitModeSelect.value = "equal";
-    expenseCurrencySelect.value = DEFAULT_INPUT_CURRENCY;
-    expenseDateInput.value = todayIsoDate();
+    if (editingExpenseId) {
+      state.expenses = state.expenses.map((expense) => expense.id === editingExpenseId ? nextExpense : expense);
+    } else {
+      state.expenses.unshift(nextExpense);
+    }
+
+    clearExpenseForm();
     persistAndRender();
   } catch (error) {
     alert(error.message);
@@ -262,9 +271,14 @@ function getSelectedParticipantIds() {
   return [...participantOptions.querySelectorAll("input:checked")].map((input) => input.value);
 }
 
-function handleReset() {
+function handleResetSlide() {
+  if (Number(resetSliderInput.value) < 100) {
+    return;
+  }
+
   const confirmed = window.confirm("Reset all local test data in this browser?");
   if (!confirmed) {
+    resetSliderInput.value = "0";
     return;
   }
 
@@ -272,7 +286,8 @@ function handleReset() {
   state.members = [];
   state.expenses = [];
   state.currencies = DEFAULT_CURRENCIES;
-  expenseDateInput.value = todayIsoDate();
+  clearExpenseForm();
+  resetSliderInput.value = "0";
   render();
 }
 
@@ -304,8 +319,16 @@ function renderMembers() {
 
 function renderExpenseControls() {
   const canAddExpense = state.members.length >= 2;
+  const activeTitle = expenseTitleInput.value || "";
+  const activeAmount = expenseAmountInput.value || "";
   const activeDate = expenseDateInput.value || todayIsoDate();
   const activeCurrency = expenseCurrencySelect.value || DEFAULT_INPUT_CURRENCY;
+  const activePaidBy = paidBySelect.value || "";
+  const activeParticipants = getSelectedParticipantIds();
+  const activeCustomShares = Object.fromEntries(
+    [...customSplitInputs.querySelectorAll("input[data-member-id]")].map((input) => [input.dataset.memberId, input.value])
+  );
+  const activeSplitMode = splitModeSelect.value || "equal";
 
   expenseTitleInput.disabled = !canAddExpense;
   expenseAmountInput.disabled = !canAddExpense;
@@ -320,22 +343,39 @@ function renderExpenseControls() {
     .map(([code, name]) => `<option value="${code}">${code} - ${escapeHtml(name)}</option>`)
     .join("");
   expenseCurrencySelect.value = state.currencies[activeCurrency] ? activeCurrency : DEFAULT_INPUT_CURRENCY;
+  expenseTitleInput.value = activeTitle;
+  expenseAmountInput.value = activeAmount;
   expenseDateInput.value = activeDate;
+  splitModeSelect.value = activeSplitMode;
+  expenseSubmitButton.textContent = editingExpenseId ? "Update expense" : "Save expense";
+  expenseCancelButton.classList.toggle("hidden", !editingExpenseId);
 
   paidBySelect.innerHTML = state.members.length
     ? state.members.map((member) => `<option value="${member.id}">${escapeHtml(member.name)}</option>`).join("")
     : `<option value="">Add members first</option>`;
+  paidBySelect.value = state.members.some((member) => member.id === activePaidBy)
+    ? activePaidBy
+    : (state.members[0]?.id || "");
 
+  const selectedParticipants = new Set(
+    activeParticipants.length ? activeParticipants : state.members.map((member) => member.id)
+  );
   participantOptions.innerHTML = state.members
     .map((member) => `
       <label class="check-item">
-        <input type="checkbox" value="${member.id}" checked>
+        <input type="checkbox" value="${member.id}" ${selectedParticipants.has(member.id) ? "checked" : ""}>
         <span>${escapeHtml(member.name)}</span>
       </label>
     `)
     .join("");
 
   renderCustomInputs();
+  Object.entries(activeCustomShares).forEach(([memberId, amount]) => {
+    const input = customSplitInputs.querySelector(`[data-member-id="${memberId}"]`);
+    if (input) {
+      input.value = amount;
+    }
+  });
   renderCustomSplitState();
   updateExpenseMetaPreview();
 }
@@ -427,10 +467,17 @@ function renderExpenses() {
               <p>${escapeHtml(convertedNote)}</p>
             </div>
             <p>${escapeHtml(splitSummary)}</p>
+            <div class="expense-card-actions">
+              <button type="button" class="ghost-button" data-edit-expense-id="${expense.id}">Edit</button>
+            </div>
           </article>
         `;
       }).join("")
     : `<div class="empty-state">Your expense history will appear here.</div>`;
+
+  expenseList.querySelectorAll("[data-edit-expense-id]").forEach((button) => {
+    button.addEventListener("click", () => startExpenseEdit(button.dataset.editExpenseId));
+  });
 }
 
 function removeMember(memberId) {
@@ -539,6 +586,51 @@ async function getHistoricalRateToSgd(currencyCode, expenseDate) {
 
 function findMember(memberId) {
   return state.members.find((member) => member.id === memberId) || { name: "Unknown member" };
+}
+
+function startExpenseEdit(expenseId) {
+  const expense = state.expenses.find((entry) => entry.id === expenseId);
+  if (!expense) {
+    return;
+  }
+
+  editingExpenseId = expenseId;
+  expenseTitleInput.value = expense.title;
+  expenseAmountInput.value = expense.amount;
+  expenseCurrencySelect.value = expense.currencyCode || DEFAULT_INPUT_CURRENCY;
+  expenseDateInput.value = expense.expenseDate || todayIsoDate();
+  paidBySelect.value = expense.paidBy;
+  splitModeSelect.value = expense.splitMode;
+
+  participantOptions.querySelectorAll("input").forEach((input) => {
+    input.checked = expense.participants.includes(input.value);
+  });
+
+  renderExpenseControls();
+  Object.entries(Object.fromEntries(expense.shares.map((share) => [share.memberId, share.amount]))).forEach(([memberId, amount]) => {
+    const input = customSplitInputs.querySelector(`[data-member-id="${memberId}"]`);
+    if (input) {
+      input.value = amount;
+    }
+  });
+  renderCustomSplitState();
+  updateExpenseMetaPreview();
+  expenseTitleInput.scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
+function cancelExpenseEdit() {
+  clearExpenseForm();
+  render();
+}
+
+function clearExpenseForm() {
+  editingExpenseId = null;
+  expenseForm.reset();
+  splitModeSelect.value = "equal";
+  expenseCurrencySelect.value = DEFAULT_INPUT_CURRENCY;
+  expenseDateInput.value = todayIsoDate();
+  resetSliderInput.value = "0";
+  renderExpenseControls();
 }
 
 function todayIsoDate() {
