@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Trip Splitter</title>
+  <title>Trip Splitter Local Test</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@500;700&family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -14,10 +14,9 @@
     <header class="hero">
       <div>
         <p class="eyebrow">Trip expense tracker</p>
-        <h1>Capture who paid, who owes, and how to settle up cleanly.</h1>
+        <h1>Local test mode with browser storage only.</h1>
         <p class="hero-copy">
-          Add your travel group, log each shared expense, split bills equally or with exact amounts,
-          and finish the trip with a minimal set of repayments.
+          This version runs without the Node server or PostgreSQL. It stores data in your browser and is useful for quick testing.
         </p>
       </div>
       <section class="hero-card">
@@ -25,7 +24,7 @@
         <ol>
           <li>Add everyone on the trip.</li>
           <li>Record each expense and choose the split.</li>
-          <li>Review balances and settle the smallest number of debts.</li>
+          <li>All data is stored in this browser only.</li>
         </ol>
       </section>
     </header>
@@ -58,8 +57,7 @@
             <h2>Log a shared cost</h2>
           </div>
           <div class="header-actions">
-            <span id="sync-status" class="status-pill" data-tone="neutral">Loading shared trip...</span>
-            <button id="sync-button" class="ghost-button" type="button">Sync latest</button>
+            <span id="sync-status" class="status-pill" data-tone="neutral">Local browser storage</span>
           </div>
         </div>
         <form id="expense-form" class="expense-form">
@@ -150,6 +148,6 @@
     </div>
   </template>
 
-  <script src="app.js"></script>
+  <script src="app-local.js"></script>
 </body>
 </html>

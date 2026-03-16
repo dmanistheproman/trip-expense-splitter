@@ -214,6 +214,15 @@ select:disabled {
   gap: 16px;
 }
 
+.fx-preview {
+  padding: 14px 16px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.52);
+  color: var(--muted);
+  font-size: 0.92rem;
+  line-height: 1.5;
+}
+
 .participant-picker {
   margin: 0;
   padding: 0;

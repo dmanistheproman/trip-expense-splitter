@@ -1,11 +1,28 @@
 const BASE_CURRENCY = "SGD";
 const DEFAULT_INPUT_CURRENCY = "CNY";
-
-const state = {
-  members: [],
-  expenses: [],
-  currencies: {},
+const STORAGE_KEY = "trip-splitter-local-state";
+const DEFAULT_CURRENCIES = {
+  AUD: "Australian Dollar",
+  CAD: "Canadian Dollar",
+  CHF: "Swiss Franc",
+  CNY: "Chinese Renminbi",
+  EUR: "Euro",
+  GBP: "British Pound Sterling",
+  HKD: "Hong Kong Dollar",
+  IDR: "Indonesian Rupiah",
+  INR: "Indian Rupee",
+  JPY: "Japanese Yen",
+  KRW: "South Korean Won",
+  MYR: "Malaysian Ringgit",
+  PHP: "Philippine Peso",
+  SGD: "Singapore Dollar",
+  THB: "Thai Baht",
+  TWD: "New Taiwan Dollar",
+  USD: "US Dollar",
+  VND: "Vietnamese Dong",
 };
+
+const state = loadState();
 
 const memberForm = document.querySelector("#member-form");
 const memberNameInput = document.querySelector("#member-name");
@@ -29,10 +46,7 @@ const balanceList = document.querySelector("#balance-list");
 const settlementList = document.querySelector("#settlement-list");
 const expenseList = document.querySelector("#expense-list");
 const resetButton = document.querySelector("#reset-button");
-const syncButton = document.querySelector("#sync-button");
 const syncStatus = document.querySelector("#sync-status");
-
-let pendingExpenseDraft = null;
 
 memberForm.addEventListener("submit", handleMemberSubmit);
 expenseForm.addEventListener("submit", handleExpenseSubmit);
@@ -46,58 +60,54 @@ expenseCurrencySelect.addEventListener("change", updateExpenseMetaPreview);
 expenseAmountInput.addEventListener("input", updateExpenseMetaPreview);
 expenseDateInput.addEventListener("input", updateExpenseMetaPreview);
 resetButton.addEventListener("click", handleReset);
-syncButton.addEventListener("click", () => fetchAll({ preserveForm: true }));
-
-window.addEventListener("focus", () => fetchState({ preserveForm: true, silent: true }));
-setInterval(() => {
-  if (document.visibilityState === "visible") {
-    fetchState({ preserveForm: true, silent: true });
-  }
-}, 15000);
 
 expenseDateInput.value = todayIsoDate();
 render();
-fetchAll();
+loadCurrencies();
 
-async function fetchAll(options = {}) {
-  await Promise.all([
-    fetchCurrencies(options),
-    fetchState(options),
-  ]);
-}
-
-async function fetchCurrencies(options = {}) {
-  const { silent = false } = options;
-
+function loadState() {
   try {
-    const payload = await request("/api/currencies");
-    state.currencies = payload?.currencies || {};
-    renderCurrencyOptions(captureExpenseDraft());
-  } catch (error) {
-    if (!silent) {
-      setSyncStatus(error.message || "Could not load currencies.", "error");
-    }
+    const raw = localStorage.getItem(STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : {};
+    return {
+      members: Array.isArray(parsed.members) ? parsed.members : [],
+      expenses: Array.isArray(parsed.expenses) ? parsed.expenses : [],
+      currencies: parsed.currencies && typeof parsed.currencies === "object" ? parsed.currencies : DEFAULT_CURRENCIES,
+    };
+  } catch {
+    return {
+      members: [],
+      expenses: [],
+      currencies: DEFAULT_CURRENCIES,
+    };
   }
 }
 
-async function fetchState(options = {}) {
-  const { preserveForm = false, silent = false } = options;
-  const draft = preserveForm ? captureExpenseDraft() : pendingExpenseDraft;
-  pendingExpenseDraft = null;
+function saveState() {
+  localStorage.setItem(
+    STORAGE_KEY,
+    JSON.stringify({
+      members: state.members,
+      expenses: state.expenses,
+      currencies: state.currencies,
+    })
+  );
+}
 
+async function loadCurrencies() {
   try {
-    if (!silent) {
-      setSyncStatus("Syncing shared trip...", "neutral");
+    const response = await fetch("https://api.frankfurter.app/currencies");
+    if (response.ok) {
+      const payload = await response.json();
+      state.currencies = {
+        ...payload,
+        [BASE_CURRENCY]: payload[BASE_CURRENCY] || DEFAULT_CURRENCIES[BASE_CURRENCY],
+      };
+      saveState();
+      render();
     }
-
-    const nextState = await request("/api/state");
-    state.members = Array.isArray(nextState.members) ? nextState.members : [];
-    state.expenses = Array.isArray(nextState.expenses) ? nextState.expenses : [];
-    render(draft);
-    setSyncStatus(`Synced ${formatSyncTime(new Date())}`, "success");
-  } catch (error) {
-    render(draft);
-    setSyncStatus(error.message || "Could not reach the shared trip server.", "error");
+  } catch {
+    setSyncStatus("Local browser storage. FX list fallback in use.", "neutral");
   }
 }
 
@@ -108,16 +118,20 @@ async function handleMemberSubmit(event) {
     return;
   }
 
-  try {
-    await request("/api/members", {
-      method: "POST",
-      body: { name },
-    });
-    memberForm.reset();
-    await fetchState();
-  } catch (error) {
-    alert(error.message);
+  const duplicate = state.members.some((member) => member.name.toLowerCase() === name.toLowerCase());
+  if (duplicate) {
+    alert("That member already exists.");
+    return;
   }
+
+  state.members.push({
+    id: crypto.randomUUID(),
+    name,
+    createdAt: new Date().toISOString(),
+  });
+
+  memberForm.reset();
+  persistAndRender();
 }
 
 async function handleExpenseSubmit(event) {
@@ -167,24 +181,31 @@ async function handleExpenseSubmit(event) {
   }
 
   try {
-    await request("/api/expenses", {
-      method: "POST",
-      body: {
-        title,
-        amount: roundCurrency(amount),
-        currencyCode,
-        expenseDate,
-        paidBy,
-        splitMode,
-        shares,
-      },
+    const fx = await getHistoricalRateToSgd(currencyCode, expenseDate);
+    const amountSgd = roundCurrency(amount * fx.rate);
+    const sharesWithSgd = buildConvertedShares(shares, fx.rate);
+
+    state.expenses.unshift({
+      id: crypto.randomUUID(),
+      title,
+      amount: roundCurrency(amount),
+      amountSgd,
+      currencyCode,
+      expenseDate,
+      fxRateToSgd: fx.rate,
+      fxDate: fx.date,
+      paidBy,
+      splitMode,
+      shares: sharesWithSgd,
+      participants: sharesWithSgd.map((share) => share.memberId),
+      createdAt: new Date().toISOString(),
     });
+
     expenseForm.reset();
     splitModeSelect.value = "equal";
     expenseCurrencySelect.value = DEFAULT_INPUT_CURRENCY;
     expenseDateInput.value = todayIsoDate();
-    pendingExpenseDraft = emptyExpenseDraft();
-    await fetchState();
+    persistAndRender();
   } catch (error) {
     alert(error.message);
   }
@@ -219,28 +240,50 @@ function buildCustomShares(participantIds, amount) {
   return shares;
 }
 
+function buildConvertedShares(shares, rate) {
+  const converted = shares.map((share) => ({
+    memberId: share.memberId,
+    amount: share.amount,
+    amountSgd: roundCurrency(share.amount * rate),
+  }));
+
+  const targetTotal = roundCurrency(shares.reduce((sum, share) => sum + share.amount, 0) * rate);
+  const actualTotal = roundCurrency(converted.reduce((sum, share) => sum + share.amountSgd, 0));
+  const delta = roundCurrency(targetTotal - actualTotal);
+
+  if (Math.abs(delta) > 0.009 && converted.length > 0) {
+    converted[converted.length - 1].amountSgd = roundCurrency(converted[converted.length - 1].amountSgd + delta);
+  }
+
+  return converted;
+}
+
 function getSelectedParticipantIds() {
   return [...participantOptions.querySelectorAll("input:checked")].map((input) => input.value);
 }
 
-async function handleReset() {
-  const confirmed = window.confirm("Reset all members and expenses for this trip?");
+function handleReset() {
+  const confirmed = window.confirm("Reset all local test data in this browser?");
   if (!confirmed) {
     return;
   }
 
-  try {
-    await request("/api/reset", { method: "POST" });
-    pendingExpenseDraft = emptyExpenseDraft();
-    await fetchState();
-  } catch (error) {
-    alert(error.message);
-  }
+  localStorage.removeItem(STORAGE_KEY);
+  state.members = [];
+  state.expenses = [];
+  state.currencies = DEFAULT_CURRENCIES;
+  expenseDateInput.value = todayIsoDate();
+  render();
 }
 
-function render(draft = captureExpenseDraft()) {
+function persistAndRender() {
+  saveState();
+  render();
+}
+
+function render() {
   renderMembers();
-  renderExpenseControls(draft);
+  renderExpenseControls();
   renderBalances();
   renderSettlements();
   renderExpenses();
@@ -251,7 +294,6 @@ function renderMembers() {
   memberEmpty.classList.toggle("hidden", state.members.length > 0);
 
   const template = document.querySelector("#member-chip-template");
-
   state.members.forEach((member) => {
     const node = template.content.firstElementChild.cloneNode(true);
     node.querySelector("span").textContent = member.name;
@@ -260,9 +302,10 @@ function renderMembers() {
   });
 }
 
-function renderExpenseControls(draft) {
+function renderExpenseControls() {
   const canAddExpense = state.members.length >= 2;
-  const nextDraft = normalizeDraft(draft);
+  const activeDate = expenseDateInput.value || todayIsoDate();
+  const activeCurrency = expenseCurrencySelect.value || DEFAULT_INPUT_CURRENCY;
 
   expenseTitleInput.disabled = !canAddExpense;
   expenseAmountInput.disabled = !canAddExpense;
@@ -272,72 +315,36 @@ function renderExpenseControls(draft) {
   splitModeSelect.disabled = !canAddExpense;
   expenseForm.querySelector("button[type='submit']").disabled = !canAddExpense;
 
-  renderCurrencyOptions(nextDraft);
+  expenseCurrencySelect.innerHTML = Object.entries(state.currencies)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([code, name]) => `<option value="${code}">${code} - ${escapeHtml(name)}</option>`)
+    .join("");
+  expenseCurrencySelect.value = state.currencies[activeCurrency] ? activeCurrency : DEFAULT_INPUT_CURRENCY;
+  expenseDateInput.value = activeDate;
 
   paidBySelect.innerHTML = state.members.length
     ? state.members.map((member) => `<option value="${member.id}">${escapeHtml(member.name)}</option>`).join("")
     : `<option value="">Add members first</option>`;
 
-  if (state.members.length) {
-    const fallbackPayer = state.members[0].id;
-    paidBySelect.value = state.members.some((member) => member.id === nextDraft.paidBy)
-      ? nextDraft.paidBy
-      : fallbackPayer;
-  }
-
-  expenseTitleInput.value = nextDraft.title;
-  expenseAmountInput.value = nextDraft.amount;
-  expenseDateInput.value = nextDraft.expenseDate;
-  splitModeSelect.value = nextDraft.splitMode;
-
-  const selectedParticipants = new Set(
-    nextDraft.participants.length ? nextDraft.participants : state.members.map((member) => member.id)
-  );
-
   participantOptions.innerHTML = state.members
-    .map((member) => {
-      const checked = selectedParticipants.has(member.id) ? "checked" : "";
-      return `
-        <label class="check-item">
-          <input type="checkbox" value="${member.id}" ${checked}>
-          <span>${escapeHtml(member.name)}</span>
-        </label>
-      `;
-    })
+    .map((member) => `
+      <label class="check-item">
+        <input type="checkbox" value="${member.id}" checked>
+        <span>${escapeHtml(member.name)}</span>
+      </label>
+    `)
     .join("");
 
-  renderCustomInputs(nextDraft.customShares);
+  renderCustomInputs();
   renderCustomSplitState();
   updateExpenseMetaPreview();
 }
 
-function renderCurrencyOptions(draft) {
-  const selectedCurrency = draft?.currencyCode || expenseCurrencySelect.value || DEFAULT_INPUT_CURRENCY;
-  const entries = Object.entries(state.currencies);
-
-  if (entries.length === 0) {
-    expenseCurrencySelect.innerHTML = `
-      <option value="${DEFAULT_INPUT_CURRENCY}">${DEFAULT_INPUT_CURRENCY} - Chinese Yuan Renminbi</option>
-      <option value="${BASE_CURRENCY}">${BASE_CURRENCY} - Singapore Dollar</option>
-    `;
-    expenseCurrencySelect.value = DEFAULT_INPUT_CURRENCY;
-    return;
-  }
-
-  expenseCurrencySelect.innerHTML = entries
-    .sort(([left], [right]) => left.localeCompare(right))
-    .map(([code, name]) => `<option value="${code}">${code} - ${escapeHtml(name)}</option>`)
-    .join("");
-
-  expenseCurrencySelect.value = state.currencies[selectedCurrency] ? selectedCurrency : DEFAULT_INPUT_CURRENCY;
-}
-
-function renderCustomInputs(customShares = {}) {
+function renderCustomInputs() {
   const participantIds = getSelectedParticipantIds();
   customSplitInputs.innerHTML = participantIds
     .map((participantId) => {
       const member = state.members.find((entry) => entry.id === participantId);
-      const existingValue = customShares[participantId] ?? "";
       return `
         <label>
           ${escapeHtml(member?.name || "")}
@@ -345,7 +352,7 @@ function renderCustomInputs(customShares = {}) {
             type="number"
             min="0"
             step="0.01"
-            value="${existingValue}"
+            value=""
             data-member-id="${participantId}"
             placeholder="0.00"
           >
@@ -357,8 +364,7 @@ function renderCustomInputs(customShares = {}) {
 }
 
 function renderCustomSplitState() {
-  const showCustom = splitModeSelect.value === "custom";
-  customSplitSection.classList.toggle("hidden", !showCustom);
+  customSplitSection.classList.toggle("hidden", splitModeSelect.value !== "custom");
 }
 
 function renderBalances() {
@@ -372,15 +378,12 @@ function renderBalances() {
 
   balances.forEach(({ memberId, amount }) => {
     const member = findMember(memberId);
-    const className = amount >= 0 ? "positive" : "negative";
-    const prefix = amount >= 0 ? "is owed" : "owes";
-
     balanceList.insertAdjacentHTML(
       "beforeend",
       `
         <div class="summary-item">
           <strong>${escapeHtml(member.name)}</strong>
-          <span class="${className}">${prefix} ${formatCurrency(Math.abs(amount), BASE_CURRENCY)}</span>
+          <span class="${amount >= 0 ? "positive" : "negative"}">${amount >= 0 ? "is owed" : "owes"} ${formatCurrency(Math.abs(amount), BASE_CURRENCY)}</span>
         </div>
       `
     );
@@ -389,94 +392,64 @@ function renderBalances() {
 
 function renderSettlements() {
   const settlements = simplifyDebts(computeBalances());
-  settlementList.innerHTML = "";
-
-  if (settlements.length === 0) {
-    settlementList.innerHTML = `<div class="empty-state">No repayments needed yet.</div>`;
-    return;
-  }
-
-  settlements.forEach((settlement) => {
-    settlementList.insertAdjacentHTML(
-      "beforeend",
-      `
+  settlementList.innerHTML = settlements.length
+    ? settlements.map((settlement) => `
         <div class="summary-item">
           <strong>${escapeHtml(findMember(settlement.from).name)}</strong>
           <span>pays ${escapeHtml(findMember(settlement.to).name)} ${formatCurrency(settlement.amount, BASE_CURRENCY)}</span>
         </div>
-      `
-    );
-  });
+      `).join("")
+    : `<div class="empty-state">No repayments needed yet.</div>`;
 }
 
 function renderExpenses() {
-  expenseList.innerHTML = "";
+  expenseList.innerHTML = state.expenses.length
+    ? state.expenses.map((expense) => {
+        const payer = findMember(expense.paidBy);
+        const splitSummary = expense.shares
+          .map((share) => `${findMember(share.memberId).name}: ${formatCurrency(share.amount, expense.currencyCode)} (${formatCurrency(share.amountSgd, BASE_CURRENCY)})`)
+          .join(" | ");
+        const convertedNote = expense.currencyCode === BASE_CURRENCY
+          ? `Settles directly in ${BASE_CURRENCY}`
+          : `${formatCurrency(expense.amount, expense.currencyCode)} -> ${formatCurrency(expense.amountSgd, BASE_CURRENCY)} at ${expense.fxRateToSgd.toFixed(4)} on ${expense.fxDate}`;
 
-  if (state.expenses.length === 0) {
-    expenseList.innerHTML = `<div class="empty-state">Your expense history will appear here.</div>`;
+        return `
+          <article class="expense-card">
+            <div class="expense-card-header">
+              <div>
+                <h3>${escapeHtml(expense.title)}</h3>
+                <p>${escapeHtml(payer.name)} paid ${formatCurrency(expense.amount, expense.currencyCode)} (${formatCurrency(expense.amountSgd, BASE_CURRENCY)})</p>
+              </div>
+              <small>${formatDate(expense.expenseDate || expense.createdAt)}</small>
+            </div>
+            <div class="expense-card-meta">
+              <p>${expense.splitMode === "equal" ? "Equal split" : "Custom split"}</p>
+              <p>${escapeHtml(convertedNote)}</p>
+            </div>
+            <p>${escapeHtml(splitSummary)}</p>
+          </article>
+        `;
+      }).join("")
+    : `<div class="empty-state">Your expense history will appear here.</div>`;
+}
+
+function removeMember(memberId) {
+  const used = state.expenses.some((expense) => expense.paidBy === memberId || expense.participants.includes(memberId));
+  if (used) {
+    alert("This member is already used in recorded expenses and cannot be removed.");
     return;
   }
 
-  state.expenses.forEach((expense) => {
-    const payer = findMember(expense.paidBy);
-    const splitSummary = expense.shares
-      .map((share) => {
-        const original = formatCurrency(share.amount, expense.currencyCode || BASE_CURRENCY);
-        const sgd = formatCurrency(share.amountSgd || share.amount, BASE_CURRENCY);
-        return `${findMember(share.memberId).name}: ${original} (${sgd})`;
-      })
-      .join(" | ");
-
-    const convertedNote = expense.currencyCode === BASE_CURRENCY
-      ? `Settles directly in ${BASE_CURRENCY}`
-      : `${formatCurrency(expense.amount, expense.currencyCode)} -> ${formatCurrency(expense.amountSgd, BASE_CURRENCY)} at ${expense.fxRateToSgd.toFixed(4)} on ${expense.fxDate}`;
-
-    expenseList.insertAdjacentHTML(
-      "beforeend",
-      `
-        <article class="expense-card">
-          <div class="expense-card-header">
-            <div>
-              <h3>${escapeHtml(expense.title)}</h3>
-              <p>${escapeHtml(payer.name)} paid ${formatCurrency(expense.amount, expense.currencyCode || BASE_CURRENCY)} (${formatCurrency(expense.amountSgd, BASE_CURRENCY)})</p>
-            </div>
-            <small>${formatDate(expense.expenseDate || expense.createdAt)}</small>
-          </div>
-          <div class="expense-card-meta">
-            <p>${expense.splitMode === "equal" ? "Equal split" : "Custom split"}</p>
-            <p>${escapeHtml(convertedNote)}</p>
-          </div>
-          <p>${escapeHtml(splitSummary)}</p>
-        </article>
-      `
-    );
-  });
-}
-
-async function removeMember(memberId) {
-  try {
-    await request(`/api/members/${memberId}`, {
-      method: "DELETE",
-    });
-    await fetchState();
-  } catch (error) {
-    alert(error.message);
-  }
+  state.members = state.members.filter((member) => member.id !== memberId);
+  persistAndRender();
 }
 
 function computeBalances() {
   const balances = new Map(state.members.map((member) => [member.id, 0]));
-
   state.expenses.forEach((expense) => {
-    balances.set(
-      expense.paidBy,
-      roundCurrency((balances.get(expense.paidBy) || 0) + (expense.amountSgd || expense.amount))
-    );
+    balances.set(expense.paidBy, roundCurrency((balances.get(expense.paidBy) || 0) + expense.amountSgd));
     expense.shares.forEach((share) => {
-      balances.set(
-        share.memberId,
-        roundCurrency((balances.get(share.memberId) || 0) - (share.amountSgd || share.amount))
-      );
+      balances.set(share.memberId, roundCurrency((balances.get(share.memberId) || 0) - share.amountSgd));
     });
   });
 
@@ -486,12 +459,11 @@ function computeBalances() {
 }
 
 function simplifyDebts(balances) {
-  const creditors = balances
-    .filter((entry) => entry.amount > 0.009)
-    .map((entry) => ({ ...entry }));
-  const debtors = balances
-    .filter((entry) => entry.amount < -0.009)
-    .map((entry) => ({ memberId: entry.memberId, amount: Math.abs(entry.amount) }));
+  const creditors = balances.filter((entry) => entry.amount > 0.009).map((entry) => ({ ...entry }));
+  const debtors = balances.filter((entry) => entry.amount < -0.009).map((entry) => ({
+    memberId: entry.memberId,
+    amount: Math.abs(entry.amount),
+  }));
 
   const settlements = [];
   let creditorIndex = 0;
@@ -502,12 +474,7 @@ function simplifyDebts(balances) {
     const debtor = debtors[debtorIndex];
     const amount = roundCurrency(Math.min(creditor.amount, debtor.amount));
 
-    settlements.push({
-      from: debtor.memberId,
-      to: creditor.memberId,
-      amount,
-    });
-
+    settlements.push({ from: debtor.memberId, to: creditor.memberId, amount });
     creditor.amount = roundCurrency(creditor.amount - amount);
     debtor.amount = roundCurrency(debtor.amount - amount);
 
@@ -523,10 +490,7 @@ function simplifyDebts(balances) {
 }
 
 function updateCustomTotalHint() {
-  const total = [...customSplitInputs.querySelectorAll("input")].reduce(
-    (sum, input) => sum + Number(input.value || 0),
-    0
-  );
+  const total = [...customSplitInputs.querySelectorAll("input")].reduce((sum, input) => sum + Number(input.value || 0), 0);
   customTotalHint.textContent = `Total assigned: ${formatCurrency(total, expenseCurrencySelect.value || DEFAULT_INPUT_CURRENCY)}`;
 }
 
@@ -550,49 +514,27 @@ function updateExpenseMetaPreview() {
   updateCustomTotalHint();
 }
 
-function captureExpenseDraft() {
-  return {
-    title: expenseTitleInput.value || "",
-    amount: expenseAmountInput.value || "",
-    currencyCode: expenseCurrencySelect.value || DEFAULT_INPUT_CURRENCY,
-    expenseDate: expenseDateInput.value || todayIsoDate(),
-    paidBy: paidBySelect.value || "",
-    splitMode: splitModeSelect.value || "equal",
-    participants: getSelectedParticipantIds(),
-    customShares: Object.fromEntries(
-      [...customSplitInputs.querySelectorAll("input[data-member-id]")].map((input) => [
-        input.dataset.memberId,
-        input.value,
-      ])
-    ),
-  };
-}
+async function getHistoricalRateToSgd(currencyCode, expenseDate) {
+  if (currencyCode === BASE_CURRENCY) {
+    return { rate: 1, date: expenseDate };
+  }
 
-function normalizeDraft(draft) {
-  const baseDraft = draft || emptyExpenseDraft();
-  return {
-    title: baseDraft.title || "",
-    amount: baseDraft.amount || "",
-    currencyCode: baseDraft.currencyCode || DEFAULT_INPUT_CURRENCY,
-    expenseDate: baseDraft.expenseDate || todayIsoDate(),
-    paidBy: baseDraft.paidBy || "",
-    splitMode: baseDraft.splitMode === "custom" ? "custom" : "equal",
-    participants: Array.isArray(baseDraft.participants) ? baseDraft.participants : [],
-    customShares: baseDraft.customShares || {},
-  };
-}
+  const url = new URL(`https://api.frankfurter.app/${expenseDate}`);
+  url.searchParams.set("from", currencyCode);
+  url.searchParams.set("to", BASE_CURRENCY);
 
-function emptyExpenseDraft() {
-  return {
-    title: "",
-    amount: "",
-    currencyCode: DEFAULT_INPUT_CURRENCY,
-    expenseDate: todayIsoDate(),
-    paidBy: "",
-    splitMode: "equal",
-    participants: [],
-    customShares: {},
-  };
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`Could not load the ${expenseDate} exchange rate for ${currencyCode}.`);
+  }
+
+  const payload = await response.json();
+  const rate = Number(payload?.rates?.[BASE_CURRENCY]);
+  if (!Number.isFinite(rate) || rate <= 0) {
+    throw new Error(`No ${BASE_CURRENCY} rate was returned for ${currencyCode} on ${expenseDate}.`);
+  }
+
+  return { rate, date: String(payload.date || expenseDate) };
 }
 
 function findMember(memberId) {
@@ -626,38 +568,9 @@ function formatDate(value) {
   }).format(new Date(value));
 }
 
-function formatSyncTime(date) {
-  return new Intl.DateTimeFormat(undefined, {
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(date);
-}
-
 function setSyncStatus(message, tone) {
   syncStatus.textContent = message;
   syncStatus.dataset.tone = tone;
-}
-
-async function request(path, options = {}) {
-  const response = await fetch(path, {
-    method: options.method || "GET",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: options.body ? JSON.stringify(options.body) : undefined,
-  });
-
-  let payload = null;
-  const contentType = response.headers.get("content-type") || "";
-  if (contentType.includes("application/json")) {
-    payload = await response.json();
-  }
-
-  if (!response.ok) {
-    throw new Error(payload?.error || `Request failed with status ${response.status}.`);
-  }
-
-  return payload;
 }
 
 function escapeHtml(value) {
